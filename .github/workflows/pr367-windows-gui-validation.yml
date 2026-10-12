@@ -1,0 +1,20 @@
+name: PR367 Windows native Tk GUI validation
+on:
+  push:
+    branches:
+      - validation/pr367-sha-20261013
+jobs:
+  validate-gui:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install app requirements
+        shell: powershell
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Exercise native Windows Tk settings and report button
+        shell: powershell
+        run: python .github/scripts/pr367_native_tk_validation.py
