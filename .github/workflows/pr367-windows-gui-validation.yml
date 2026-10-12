@@ -17,4 +17,6 @@ jobs:
         run: python -m pip install --disable-pip-version-check -r requirements.txt
       - name: Exercise native Windows Tk settings and report button
         shell: powershell
-        run: python .github/scripts/pr367_native_tk_validation.py
+        run: |
+          $env:PYTHONPATH = (Get-Location).Path
+          python .github/scripts/pr367_native_tk_validation.py
