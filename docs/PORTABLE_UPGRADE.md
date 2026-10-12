@@ -234,21 +234,41 @@ were used.
   Restoring the entire backup into a new rollback folder produced
   **1,004 matching files**; rechecking confirmed the backup was unchanged.
   The new release's executable and portable.mode were retained.
-- **Native executable smoke test:** LocalTimeTracker.exe launched on Windows
-  and exposed a window titled "Local Time Tracker 1.3.0"; the test process
-  was then closed. The Tkinter controls were not accessible to the GUI
-  automation used, so **visual verification of settings, generating a
-  report, and confirming report HTML were NOT completed**. Those remain
-  step-6 manual checks.
+- **Native packaged executable smoke test:** LocalTimeTracker.exe v1.3.0
+  launched on the disposable Windows system and exposed a window titled
+  "Local Time Tracker 1.3.0"; the test process was closed. The Windows
+  accessibility tree did not expose the Tk controls in this packaged
+  executable, so mouse/keyboard inspection of that *packaged executable*
+  was not completed.
+- **Windows Tk GUI code-path verification (13 October 2026 TR):**
+  An isolated [successful Windows Actions run](https://github.com/Furox-Art/Time-Tracker/actions/runs/38317255364)
+  used Windows Python 3.12 with the repository's actual v1.3.0
+  windows_app.py native Tk widgets, extracted the official v1.3.0
+  portable ZIP into disposable folders, and used fictional data only.
+  It checked the rendered settings combobox values were **5 seconds**
+  and **10 minutes**, used the actual Tk report button's invoke method
+  on the "Reports and data" tab, and verified the generated HTML
+  contained the fictional 15-minute "Fictional Editor" period.
+  After closing the Tk window, a fresh restored copy retained the same
+  visible settings and original fictional SQLite period. Automatic
+  tracking was disabled in this test to avoid recording real activity.
+  This is programmatic **native Windows Tk application UI-path**
+  validation, *not* a physical mouse-click walkthrough of the packaged
+  LocalTimeTracker.exe binary.
 - **Optional-paths-absent case:** A separate native PowerShell check
   copied the data directory while reports, config.json, and root
   preferences.json were absent. All three optional paths were skipped,
   the existing data was copied, and no nested data/data folder was created.
-- **Limits:** This was a **1.3.0-to-1.3.0 migration rehearsal**; no
-  different release pair was exercised. An end-to-end GUI-generated report
-  was **not tested**. The earlier WSL/Linux checks are not presented
-  as Windows execution. No upstream Actions run was executed or treated
-  as green.
+- **Limits:** This was a **v1.3.0-to-v1.3.0 migration rehearsal**;
+  no cross-version upgrade was exercised. The packaged binary's
+  manual UI controls were not clicked. The earlier WSL/Linux copy
+  checks are not presented as Windows execution. A separate
+  [Windows PowerShell CI run](https://github.com/Furox-Art/Time-Tracker/actions/runs/38316721144)
+  executed the documented checksum block with **eight passed cases**:
+  genuine release manifest, optional binary/text markers, and correct
+  rejection of missing, duplicate, suffix-only, wrong-hash and
+  invalid-hash entries. These fork validation runs do not replace
+  upstream PR CI; upstream maintainer authorization may still be needed.
 
 Never publish a real activity.db, personal reports, or screenshots containing
 private window titles.
