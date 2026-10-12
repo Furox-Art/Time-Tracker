@@ -1,188 +1,243 @@
 # Upgrading a portable installation
 
-This walkthrough upgrades a portable Local Time Tracker installation while
-keeping every recorded period, report and preference. Every step uses
-disposable folders and fictional activity, so nothing here touches real data.
+**Production instructions:** The commands below affect **your own portable
+installation**, not fictional data. Substitute your actual folders and ZIP
+paths before executing anything. Stop both copies, keep a verified backup
+outside the installation folders, and never overwrite that backup.
 
-The portable build stores its data inside its own folder, not in
-`%LOCALAPPDATA%\LocalTimeTracker`. That is what makes an upgrade a file copy:
-the application files come from the new release, and the data stays exactly
-where it is.
+**Separate test evidence:** The last section describes only the actual
+disposable Windows validation. A v1.3.0-to-v1.3.0 rehearsal is **not** proof
+that every other release pair has been tested.
 
-## What a portable folder holds
+## What the portable folder contains
 
-A portable installation extracted from `LocalTimeTracker-<version>-portable-x64.zip`
-looks like this once it has run:
-
-```
+~~~text
 <portable-folder>\
-├── data\
-│   ├── activity.db          recorded periods
-│   └── preferences.json     sample interval and idle threshold
-├── reports\                 generated HTML reports
-├── config.json              personal category keywords
 ├── LocalTimeTracker.exe
-├── portable.mode            marks the folder as a portable installation
-└── ...                      remaining release files
-```
+├── portable.mode           marker from the installed release
+├── preferences.json        sampling interval / idle threshold (ROOT LEVEL)
+├── config.json             optional user category settings
+├── data\
+│   └── activity.db         activity records, when present
+├── reports\                optional prior HTML reports
+├── config.example.json     shipped default category configuration
+└── _internal\              bundled runtime files
+~~~
 
-`portable.mode` and the executable are the two files that must come from the
-**new** release. Everything else under `data\`, `reports\` and `config.json`
-is yours and must survive the upgrade untouched.
+**Critical correction:** windows_app.py reads and writes
+APP_DIRECTORY / "preferences.json", beside LocalTimeTracker.exe. It does
+**not** store preferences in data/preferences.json. Preserve the root file
+when present, or the real sampling/idle settings will be lost.
 
-## Before you start
+The data, reports, config.json, and root preferences.json paths must all be
+handled **conditionally**: none is guaranteed to exist in a freshly used
+portable installation. The executable and portable.mode must come from the
+**new** release, not from the old installation.
 
-- Close the old portable installation. A running instance keeps the database
-  open, and copying a database that is being written produces a corrupt file.
-- Never run the installed version and a portable version at the same time.
-  Both track independently and can record overlapping periods.
-- Have both release ZIPs downloaded if you are upgrading more than one
-  version. This walkthrough upgrades 1.3.0 as the current release; older
-  versions work the same way.
+## 1. Stop tracking and close both instances
 
-## Step 1 — Stop the old installation
+In the old application, click **Stop**, wait for **Stopped**, and close it.
+Close the new copy if it is open. Do not run both simultaneously or copy an
+open activity database.
 
-Open the old portable folder and run `LocalTimeTracker.exe`. Press **Stop**.
-The badge returns to **Stopped** and the detail line says tracking is not
-running. Close the window — closing also stops tracking, but pressing
-**Stop** first makes the state unambiguous.
+To inspect remaining Windows instances without terminating anything:
 
-## Step 2 — Back up the old folder before touching anything
+~~~powershell
+Get-CimInstance Win32_Process -Filter "Name = 'LocalTimeTracker.exe'" |
+    Select-Object ProcessId, ExecutablePath
+~~~
 
-Copy the **entire** old portable folder to a backup location outside it. A
-release ZIP does not include your data, so this copy is the only rollback.
+If either old or new executable is listed, close it cleanly before copying.
+Do **not** force-kill the tracker to replace its Stop action.
 
-```powershell
-Copy-Item -Recurse -Path C:\demo-time-tracker -Destination C:\demo-time-tracker-backup
-```
+## 2. Set the real paths and reject existing destinations
 
-Verify the backup before continuing — a backup you have not read back is a
-hope, not a backup:
+Use **Windows PowerShell**. Replace every sample path below; choose a backup
+location outside both installation folders. The backup, destination, and
+rollback paths **must not exist**, even as empty directories:
 
-```powershell
-Get-FileHash -Algorithm SHA256 -Path C:\demo-time-tracker-backup\data\activity.db
-```
+~~~powershell
+$Old = 'C:\YourApps\LocalTimeTracker-old'
+$Backup = 'D:\VerifiedBackups\LocalTimeTracker-before-upgrade'
+$New = 'C:\YourApps\LocalTimeTracker-new'
+$Rollback = 'C:\YourApps\LocalTimeTracker-rollback'
+$ReleaseZip = 'C:\Downloads\LocalTimeTracker-NEWVERSION-portable-x64.zip'
+$Checksums = 'C:\Downloads\SHA256SUMS.txt'
 
-Compare the hash with the same command run against the original file. The two
-lines must match exactly. Then confirm the backup folder contains
-`data\activity.db`, `data\preferences.json`, `config.json` and `reports\`
-with the same sizes as the originals.
+foreach ($path in @($Old, $ReleaseZip, $Checksums)) {
+    if (-not (Test-Path -LiteralPath $path)) {
+        throw "Required input missing: $path"
+    }
+}
+foreach ($path in @($Backup, $New, $Rollback)) {
+    if (Test-Path -LiteralPath $path) {
+        throw "Destination must not exist: $path"
+    }
+}
+~~~
 
-Observed on 12 October 2026, upgrading a disposable 1.3.0 portable folder on
-WSL (Linux) with fictional data: the copied folder's `data` and `config.json`
-compared byte-for-byte identical to the original (`diff -r` reported no
-differences), and the release ZIP verified `LocalTimeTracker-1.3.0-portable-x64.zip:
-OK` against `SHA256SUMS.txt`.
+PowerShell Copy-Item -Recurse has different behavior for existing and
+nonexistent destination directories; copying to an existing directory can
+silently create an additional nested folder. **Do not rerun** the same copy
+command with the same destination. Pick another fresh destination and
+investigate the earlier failure instead.
 
-## Step 3 — Download and verify the new release
+Use this helper to compare all existing files and subdirectories by path
+and SHA-256. It works for individual files and folders and does not modify
+either input:
 
-Open the [latest release](https://github.com/HafidIdrissi/Time-Tracker/releases/latest)
-and download `LocalTimeTracker-<new-version>-portable-x64.zip` together with
-`SHA256SUMS.txt`. Keep both in the same folder and check the ZIP before
-extracting it:
+~~~powershell
+function Assert-Preserved([string]$Source, [string]$Target) {
+    if (-not (Test-Path -LiteralPath $Target)) {
+        throw "Missing destination: $Target"
+    }
+    if (Test-Path -LiteralPath $Source -PathType Leaf) {
+        if (-not (Test-Path -LiteralPath $Target -PathType Leaf) -or
+            (Get-FileHash -LiteralPath $Source).Hash -ne
+            (Get-FileHash -LiteralPath $Target).Hash) {
+            throw "File mismatch: $Source"
+        }
+        return
+    }
+    foreach ($dir in Get-ChildItem -LiteralPath $Source -Recurse -Directory -Force) {
+        $relative = $dir.FullName.Substring($Source.Length).TrimStart('\')
+        if (-not (Test-Path -LiteralPath (Join-Path $Target $relative) -PathType Container)) {
+            throw "Missing directory: $relative"
+        }
+    }
+    foreach ($file in Get-ChildItem -LiteralPath $Source -Recurse -File -Force) {
+        $relative = $file.FullName.Substring($Source.Length).TrimStart('\')
+        $copy = Join-Path $Target $relative
+        if (-not (Test-Path -LiteralPath $copy -PathType Leaf) -or
+            (Get-FileHash -LiteralPath $file.FullName).Hash -ne
+            (Get-FileHash -LiteralPath $copy).Hash) {
+            throw "File mismatch: $relative"
+        }
+    }
+}
+~~~
 
-```powershell
-Get-FileHash -Algorithm SHA256 -Path LocalTimeTracker-<new-version>-portable-x64.zip
-```
+## 3. Back up and verify the complete stopped installation
 
-Compare the hash with the line for that exact filename in `SHA256SUMS.txt`.
-A mismatch means the download is incomplete or corrupted — download it again,
-do not extract it.
+~~~powershell
+if (Test-Path -LiteralPath $Backup) { throw 'Backup path already exists' }
+Copy-Item -LiteralPath $Old -Destination $Backup -Recurse -ErrorAction Stop
+Assert-Preserved $Old $Backup
+~~~
 
-Observed on 12 October 2026: `SHA256SUMS.txt` for v1.3.0 lists
-`7de28ed97a9ea2911c1213a81e730019536ce2d93b1ddc81d7d0c7202c058059 *LocalTimeTracker-1.3.0-portable-x64.zip`,
-and `sha256sum -c` against the downloaded file reported `OK`.
+Because this copies the **entire** folder, root preferences.json and all
+optional user paths are backed up **when present**; the verification does
+not require any optional path to exist. Preserve this backup without changes.
 
-## Step 4 — Extract the new release into a separate folder
+## 4. Download and verify the new release
 
-Never extract over the old folder. Extract the verified ZIP to a new, empty
-folder beside it:
+Download the desired ZIP and its SHA256SUMS.txt from
+[GitHub Releases](https://github.com/HafidIdrissi/Time-Tracker/releases/latest).
+The following checks the ZIP against the entry for its *exact filename*:
 
-```powershell
-Expand-Archive -Path LocalTimeTracker-<new-version>-portable-x64.zip -DestinationPath C:\demo-time-tracker-new
-```
+~~~powershell
+$filename = [IO.Path]::GetFileName($ReleaseZip)
+$line = Get-Content -LiteralPath $Checksums |
+    Where-Object { $_.Trim().EndsWith($filename) } |
+    Select-Object -First 1
+if (-not $line) { throw "Checksum entry missing for $filename" }
+$expected = ($line.Trim() -split '\s+')[0]
+$actual = (Get-FileHash -LiteralPath $ReleaseZip -Algorithm SHA256).Hash
+if ($expected -ine $actual) { throw 'Release ZIP hash mismatch' }
+~~~
 
-The extracted folder has the application files and `config.example.json`, but
-no `data\`, no `reports\`, and no `config.json`. That is expected — those come
-from the old folder next.
+Do not extract or execute a release whose hash differs.
 
-## Step 5 — Carry your data into the new folder
+## 5. Extract separately and copy **only existing** user paths
 
-Copy exactly three things from the old folder into the new one, keeping the
-same names:
+~~~powershell
+if (Test-Path -LiteralPath $New) { throw 'New folder already exists' }
+Expand-Archive -LiteralPath $ReleaseZip -DestinationPath $New -ErrorAction Stop
 
-```powershell
-Copy-Item -Recurse -Path C:\demo-time-tracker\data -Destination C:\demo-time-tracker-new\data
-Copy-Item -Recurse -Path C:\demo-time-tracker\reports -Destination C:\demo-time-tracker-new\reports
-Copy-Item -Path C:\demo-time-tracker\config.json -Destination C:\demo-time-tracker-new\config.json
-```
+foreach ($name in @('data', 'reports', 'config.json', 'preferences.json')) {
+    $source = Join-Path $Old $name
+    $destination = Join-Path $New $name
+    if (Test-Path -LiteralPath $source) {
+        if (Test-Path -LiteralPath $destination) {
+            throw "Target already exists: $destination"
+        }
+        Copy-Item -LiteralPath $source -Destination $destination -Recurse -ErrorAction Stop
+        Assert-Preserved $source $destination
+    }
+}
+~~~
 
-`data\` contains `activity.db` and `preferences.json`; `reports\` contains
-your generated HTML reports; `config.json` holds your personal category
-keywords. Copy `config.json` only if you have one — without it the app falls
-back to `config.example.json` and categories use the shipped defaults.
+The copied root preferences.json retains the original sample interval and
+idle threshold. The data folder retains the activity database, reports
+retains existing HTML files, and config.json retains custom categories;
+each is optional. Leave the new release's LocalTimeTracker.exe,
+portable.mode, config.example.json and _internal untouched.
 
-`portable.mode` comes from the extracted ZIP — the new release's copy — so
-do not carry the old one over. Observed on 12 October 2026: after the copy,
-the new folder's `data\activity.db`, `data\preferences.json` and
-`config.json` compared identical to the old folder's, and `portable.mode`
-was the new release's file.
+## 6. Start the new copy and manually verify it
 
-## Step 6 — Start the new installation and confirm your data is there
+Start the **new** LocalTimeTracker.exe only after step 5 has passed. Check
+these items in the native Windows application:
 
-Run `LocalTimeTracker.exe` in the new folder. The badge moves from
-**Stopped** to **Starting…**, then to **Running**.
+1. **Settings:** Compare the visible sampling interval and idle threshold to
+   the old **root** preferences.json, if present; otherwise expect defaults.
+2. **Reports and data:** Check historical activity and earlier HTML reports
+   if the corresponding old paths existed.
+3. **Generate and open report:** Select a date with stored activity, generate
+   a new report, and check that its HTML contains the expected activity.
+4. Confirm the desired tracking status. Stop and close the app before any
+   subsequent copy or rollback.
 
-Confirm the data survived:
+If any check fails, retain the old installation and verified backup. Only
+retire the old folder after all checks have passed.
 
-- **Reports and data** — open **Open reports folder**; your previous reports
-  are listed. Open one generated before the upgrade: the periods in it match
-  what you recorded on the old version.
-- **Settings** — the sample interval and idle threshold match what the old
-  folder's `preferences.json` held.
-- **Categories** — your `config.json` keywords still categorize activity.
+## 7. Roll back into another fresh folder
 
-Generate one new report covering the date range of your fictional data to
-prove both old and new recording work in the new folder.
+Stop and close the new application before restoring. Never overwrite the
+original backup:
 
-## Step 7 — Retire the old folder only after the new one is proven
+~~~powershell
+if (Test-Path -LiteralPath $Rollback) {
+    throw 'Rollback target must be a fresh, nonexistent directory'
+}
+Copy-Item -LiteralPath $Backup -Destination $Rollback -Recurse -ErrorAction Stop
+Assert-Preserved $Backup $Rollback
+~~~
 
-Keep the old folder and the backup from step 2 until you are satisfied with
-the new installation. When you are, delete the old portable folder — but
-keep the step 2 backup somewhere separate, since deleting the folder also
-deletes its data.
+Only then launch the restored copy. Keep the verified backup unchanged, so
+the rollback can be repeated to another fresh destination if necessary.
 
-## Rolling back
+## Validation performed — Windows test with **fictional data**
 
-If the new version misbehaves, roll back without touching the backup:
+On **12 October 2026**, a disposable fixture was created in a **new Windows
+temporary folder**. The genuine v1.3.0 portable ZIP was downloaded and
+verified against its published SHA256SUMS.txt. Windows 11 build 26200,
+**native Windows PowerShell 5.1**, and the real v1.3.0 Windows executable
+were used.
 
-1. Close the new installation (**Stop**, then close the window).
-2. Copy the step 2 backup folder to a fresh location, or extract the backup
-   ZIP if you made one:
+- **Fixture generation:** WSL Python created one fictional 15-minute
+  period in a SQLite activity.db, an old fictional HTML report, config.json
+  and **root** preferences.json with sample_seconds="5" and
+  idle_minutes="10". No actual user activity was read.
+- **Windows commands actually run:** Get-FileHash verified the ZIP;
+  Copy-Item backed up the complete 1.3.0 fixture to a **fresh** directory;
+  hashes of all **1,004 files** matched. Expand-Archive extracted the
+  release ZIP into another fresh directory. Native Copy-Item carried
+  data, reports, config.json and **root preferences.json** to the new
+  folder, with successful SHA-256 comparisons for each copied file.
+  Restoring the entire backup into a new rollback folder produced
+  **1,004 matching files**; rechecking confirmed the backup was unchanged.
+  The new release's executable and portable.mode were retained.
+- **Native executable smoke test:** LocalTimeTracker.exe launched on Windows
+  and exposed a window titled "Local Time Tracker 1.3.0"; the test process
+  was then closed. The Tkinter controls were not accessible to the GUI
+  automation used, so **visual verification of settings, generating a
+  report, and confirming report HTML were NOT completed**. Those remain
+  step-6 manual checks.
+- **Limits:** This was a **1.3.0-to-1.3.0 migration rehearsal**; no
+  different release pair was exercised. The optional-paths-absent variant
+  and an end-to-end GUI report were **not tested**. The earlier WSL/Linux
+  checks are not presented as Windows execution. No upstream Actions run
+  was executed or treated as green.
 
-   ```powershell
-   Expand-Archive -Path demo-time-tracker-backup.zip -DestinationPath C:\demo-time-tracker-rollback
-   ```
-
-3. Run `LocalTimeTracker.exe` from the restored folder. The data, reports
-   and preferences are exactly as they were before the upgrade.
-
-Rolling back this way never writes into the backup folder, so a failed
-rollback can be retried. Observed on 12 October 2026: restoring a disposable
-backup and comparing the restored `data` and `config.json` against the
-original reported no differences.
-
-## Notes
-
-- This walkthrough never overwrites the backup: the upgrade extracts the new
-  release beside the old folder, and rollback reads the backup to a new
-  location.
-- All dates and observed results in this document come from disposable
-  folders with fictional activity, run on WSL (Linux) against the real
-  v1.3.0 release on 12 October 2026. The Windows paths and PowerShell
-  commands are the supported user-facing form; the file-level operations —
-  copy, checksum verify, extract, compare — were executed exactly as written
-  using their Linux equivalents.
-- Do not publish `activity.db`, personal reports, or screenshots that show
-  real window titles. Window titles can contain private document names,
-  searches, or mail subjects.
+Never publish a real activity.db, personal reports, or screenshots containing
+private window titles.
