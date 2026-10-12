@@ -137,13 +137,122 @@ The following checks the ZIP against the entry for its *exact filename*:
 
 ~~~powershell
 $filename = [IO.Path]::GetFileName($ReleaseZip)
-$line = Get-Content -LiteralPath $Checksums |
-    Where-Object { $_.Trim().EndsWith($filename) } |
-    Select-Object -First 1
-if (-not $line) { throw "Checksum entry missing for $filename" }
-$expected = ($line.Trim() -split '\s+')[0]
+$matchingHashes = @(
+    foreach ($entry in Get-Content -LiteralPath $Checksums) {
+        # SHA256SUMS: exactly 64 hex digits, whitespace, optional * marker, filename.
+        if ($entry -match '^\s*([0-9A-Fa-f]{64})\s+\*?(.+?)\s*
+~~~
+
+Do not extract or execute a release whose hash differs.
+
+## 5. Extract separately and copy **only existing** user paths
+
+~~~powershell
+if (Test-Path -LiteralPath $New) { throw 'New folder already exists' }
+Expand-Archive -LiteralPath $ReleaseZip -DestinationPath $New -ErrorAction Stop
+
+foreach ($name in @('data', 'reports', 'config.json', 'preferences.json')) {
+    $source = Join-Path $Old $name
+    $destination = Join-Path $New $name
+    if (Test-Path -LiteralPath $source) {
+        if (Test-Path -LiteralPath $destination) {
+            throw "Target already exists: $destination"
+        }
+        Copy-Item -LiteralPath $source -Destination $destination -Recurse -ErrorAction Stop
+        Assert-Preserved $source $destination
+    }
+}
+~~~
+
+The copied root preferences.json retains the original sample interval and
+idle threshold. The data folder retains the activity database, reports
+retains existing HTML files, and config.json retains custom categories;
+each is optional. Leave the new release's LocalTimeTracker.exe,
+portable.mode, config.example.json and _internal untouched.
+
+## 6. Start the new copy and manually verify it
+
+Start the **new** LocalTimeTracker.exe only after step 5 has passed. Check
+these items in the native Windows application:
+
+1. **Settings:** Compare the visible sampling interval and idle threshold to
+   the old **root** preferences.json, if present; otherwise expect defaults.
+2. **Reports and data:** Check historical activity and earlier HTML reports
+   if the corresponding old paths existed.
+3. **Generate and open report:** Select a date with stored activity, generate
+   a new report, and check that its HTML contains the expected activity.
+4. Confirm the desired tracking status. Stop and close the app before any
+   subsequent copy or rollback.
+
+If any check fails, retain the old installation and verified backup. Only
+retire the old folder after all checks have passed.
+
+## 7. Roll back into another fresh folder
+
+Stop and close the new application before restoring. Never overwrite the
+original backup:
+
+~~~powershell
+if (Test-Path -LiteralPath $Rollback) {
+    throw 'Rollback target must be a fresh, nonexistent directory'
+}
+Copy-Item -LiteralPath $Backup -Destination $Rollback -Recurse -ErrorAction Stop
+Assert-Preserved $Backup $Rollback
+~~~
+
+Only then launch the restored copy. Keep the verified backup unchanged, so
+the rollback can be repeated to another fresh destination if necessary.
+
+## Validation performed — Windows test with **fictional data**
+
+On **12 October 2026**, a disposable fixture was created in a **new Windows
+temporary folder**. The genuine v1.3.0 portable ZIP was downloaded and
+verified against its published SHA256SUMS.txt. Windows 11 build 26200,
+**native Windows PowerShell 5.1**, and the real v1.3.0 Windows executable
+were used.
+
+- **Fixture generation:** WSL Python created one fictional 15-minute
+  period in a SQLite activity.db, an old fictional HTML report, config.json
+  and **root** preferences.json with sample_seconds="5" and
+  idle_minutes="10". No actual user activity was read.
+- **Windows commands actually run:** Get-FileHash verified the ZIP;
+  Copy-Item backed up the complete 1.3.0 fixture to a **fresh** directory;
+  hashes of all **1,004 files** matched. Expand-Archive extracted the
+  release ZIP into another fresh directory. Native Copy-Item carried
+  data, reports, config.json and **root preferences.json** to the new
+  folder, with successful SHA-256 comparisons for each copied file.
+  Restoring the entire backup into a new rollback folder produced
+  **1,004 matching files**; rechecking confirmed the backup was unchanged.
+  The new release's executable and portable.mode were retained.
+- **Native executable smoke test:** LocalTimeTracker.exe launched on Windows
+  and exposed a window titled "Local Time Tracker 1.3.0"; the test process
+  was then closed. The Tkinter controls were not accessible to the GUI
+  automation used, so **visual verification of settings, generating a
+  report, and confirming report HTML were NOT completed**. Those remain
+  step-6 manual checks.
+- **Optional-paths-absent case:** A separate native PowerShell check
+  copied the data directory while reports, config.json, and root
+  preferences.json were absent. All three optional paths were skipped,
+  the existing data was copied, and no nested data/data folder was created.
+- **Limits:** This was a **1.3.0-to-1.3.0 migration rehearsal**; no
+  different release pair was exercised. An end-to-end GUI-generated report
+  was **not tested**. The earlier WSL/Linux checks are not presented
+  as Windows execution. No upstream Actions run was executed or treated
+  as green.
+
+Never publish a real activity.db, personal reports, or screenshots containing
+private window titles.
+) {
+            $entryName = $Matches[2]
+            if ($entryName -ceq $filename) { $Matches[1] }
+        }
+    }
+)
+if ($matchingHashes.Count -ne 1) {
+    throw "Expected exactly one valid SHA-256 entry for $filename; found $($matchingHashes.Count)"
+}
 $actual = (Get-FileHash -LiteralPath $ReleaseZip -Algorithm SHA256).Hash
-if ($expected -ine $actual) { throw 'Release ZIP hash mismatch' }
+if ($matchingHashes[0] -ine $actual) { throw 'Release ZIP hash mismatch' }
 ~~~
 
 Do not extract or execute a release whose hash differs.
