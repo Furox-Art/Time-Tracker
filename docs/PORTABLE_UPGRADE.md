@@ -233,11 +233,15 @@ were used.
   automation used, so **visual verification of settings, generating a
   report, and confirming report HTML were NOT completed**. Those remain
   step-6 manual checks.
+- **Optional-paths-absent case:** A separate native PowerShell check
+  copied the data directory while reports, config.json, and root
+  preferences.json were absent. All three optional paths were skipped,
+  the existing data was copied, and no nested data/data folder was created.
 - **Limits:** This was a **1.3.0-to-1.3.0 migration rehearsal**; no
-  different release pair was exercised. The optional-paths-absent variant
-  and an end-to-end GUI report were **not tested**. The earlier WSL/Linux
-  checks are not presented as Windows execution. No upstream Actions run
-  was executed or treated as green.
+  different release pair was exercised. An end-to-end GUI-generated report
+  was **not tested**. The earlier WSL/Linux checks are not presented
+  as Windows execution. No upstream Actions run was executed or treated
+  as green.
 
 Never publish a real activity.db, personal reports, or screenshots containing
 private window titles.
